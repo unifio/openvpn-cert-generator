@@ -1,0 +1,276 @@
+#!/usr/bin/env python
+from plumbum import local
+from plumbum.cmd import mkdir, touch, tar, rm
+import subprocess
+import os
+import sys
+from glob import glob
+import re
+from datetime import datetime
+from jinja2 import Environment, PackageLoader
+from distutils.util import strtobool
+import hashlib
+import boto
+
+
+env = os.environ.copy()
+# TODO: deb specific
+env['EASY_RSA'] = '/usr/share/easy-rsa/'
+env['OPENSSL'] = 'openssl'
+env['PKCS11TOOL'] = 'pkcs11-tool'
+env['GREP'] = 'grep'
+env['KEY_CONFIG'] = os.path.join(env['EASY_RSA'], 'openssl-1.0.0.cnf')
+env['PKCS11_MODULE_PATH'] = 'dummy'
+env['PKCS11_PIN'] = 'dummy'
+
+# TODO
+env['KEY_DIR'] = os.path.join(env['HOME'], 'easy-rsa-keys')
+# env['KEY_SIZE'] = '1024'
+env['KEY_SIZE'] = '4096'
+env['CA_EXPIRE'] = '3650'
+env['KEY_EXPIRE'] = '3650'
+env['KEY_COUNTRY'] = 'US'
+env['KEY_PROVINCE'] = 'CA'
+env['KEY_CITY'] = 'San Francisco'
+env['KEY_ORG'] = 'Fort Funston'
+env['KEY_EMAIL'] = 'foo@baz.com'
+env['KEY_OU'] = 'MyOrgUnit'
+env['KEY_NAME'] = 'EasyRSA'
+env['ACTIVE_CLIENTS'] = 'foo,baz'
+env['REVOKED_CLIENTS'] = ''
+env['OPENVPN_DEV'] = 'tun'
+env['OPENVPN_PROTO'] = 'tcp'
+env['OPENVPN_HOST'] = 'localhost'
+env['OPENVPN_RESOLV_RETRY'] = 'infinite'
+env['OPENVPN_COMP_LZO'] = 'yes'
+env['OPENVPN_VERB'] = '3'
+env['OPENVPN_USE_LDAP'] = 'no'
+# TODO:
+env['OPENVPN_CLIENT_OPTIONS'] = ''
+
+env['S3_REGION'] = 'ap-northeast-1'
+env['S3_CERT_ROOT_PATH'] = "s3://tf-unifio-openvpn-cert/"
+env['S3_DIR_OVERRIDE'] = '20160319'
+
+
+def build_server(force=False):
+    with local.env(**env):
+        pkitool = local[os.path.join(local.env['EASY_RSA'], 'pkitool')]
+        openssl = local['openssl']
+
+        if force:
+            print "FORCE=true, regenerating {}".format(local.env['KEY_DIR'])
+            rm(['-rf', local.env['KEY_DIR']])
+
+        if not local.path(env['KEY_DIR']).exists():
+            print "KEY_DIR does not exist, creating"
+            mkdir.run(['-p', env['KEY_DIR']], retcode=0)
+            # see if this needs to be separate
+            touch(os.path.join(local.env['KEY_DIR'], 'index.txt'), retcode=0)
+            with open(os.path.join(local.env['KEY_DIR'], 'serial'),
+                      "w") as serial:
+                serial.write("01")
+
+        ca_files = glob(os.path.join(local.env['KEY_DIR'], 'ca.*'))
+        server_files = glob(os.path.join(local.env['KEY_DIR'], 'server.*'))
+
+        if not ca_files:
+            pkitool.run("--initca", retcode=0, stderr=sys.stdout)
+
+        if not server_files:
+            pkitool.run(["--server", "server"], retcode=0, stderr=sys.stdout)
+
+        dh_pem = os.path.join(local.env['KEY_DIR'],
+                              'dh' + local.env['KEY_SIZE'] + '.pem')
+        if not local.path(dh_pem).exists():
+            openssl.run(["dhparam", "-out", dh_pem, local.env['KEY_SIZE']],
+                        stderr=sys.stdout)
+
+
+def build_client_ovpn_file(template_vars, template):
+    # Get md5 of current file if exists
+    with local.env(**env):
+        existing_md5 = ''
+        ovpn_file = os.path.join(local.env['KEY_DIR'], template_vars['client'] + '.ovpn')
+        if local.path(ovpn_file).exists():
+            with open(ovpn_file, 'rb') as f:
+                hasher = hashlib.md5()
+                hasher.update(f.read())
+                existing_md5 = hasher.hexdigest()
+
+        new_ovpn_contents = template.render(template_vars)
+        hasher = hashlib.md5()
+        hasher.update(new_ovpn_contents)
+        new_md5 = hasher.hexdigest()
+
+        if existing_md5 != new_md5:
+            with open(ovpn_file, "wb") as f:
+                f.write(template.render(template_vars))
+
+
+def build_client(client, template):
+    # Do not continue without the serial file or index.txt
+    with local.env(**env):
+        serial_file = os.path.join(local.env['KEY_DIR'], 'serial')
+        index_file = os.path.join(local.env['KEY_DIR'], 'index.txt')
+
+        if (not local.path(serial_file).exists()) or (not local.path(index_file).exists()):
+            sys.exit("Index.txt or serial does not exist in KEY_DIR, aborting")
+
+        pkitool = local[os.path.join(local.env['EASY_RSA'], 'pkitool')]
+
+        client_files = glob(os.path.join(local.env['KEY_DIR'], client + '.*'))
+
+        template_vars = env.copy()
+        template_vars.update(client=client)
+        build_client_ovpn_file(template_vars, template)
+
+        if client_files:
+            print "Client {} certs already exist, skipping".format(client)
+        else:
+            pkitool.run(client, retcode=0, stderr=sys.stdout)
+        # Always regen the tarball
+        with local.env(GZIP='-n', **local.env):
+            tar.run(['-czvf',
+                     os.path.join(local.env['KEY_DIR'], client + '.tar.gz'),
+                     '-C',
+                     local.env['KEY_DIR'],
+                     client + '.crt',
+                     client + '.key',
+                     client + '.ovpn',
+                     'ca.crt',
+                     ], retcode=0, stderr=sys.stdout)
+
+
+def revoke_client(client, client_index_db_file):
+    client_hash = parse_index_file(client_index_db_file)
+    # Do not continue without the serial file or index.txt
+    with local.env(**env):
+        serial_file = os.path.join(local.env['KEY_DIR'], 'serial')
+        index_file = os.path.join(local.env['KEY_DIR'], 'index.txt')
+
+        if (not local.path(serial_file).exists()) or (not local.path(index_file).exists()):
+            sys.exit("Index.txt or serial does not exist in KEY_DIR, aborting")
+
+        if client_hash.get(client, {}).get('is_valid'):
+            revoke_full = local[os.path.join(local.env['EASY_RSA'], 'revoke-full')]
+            revoke_full.run(client, retcode=2, stderr=sys.stdout)
+            rm.run(os.path.join(local.env['KEY_DIR'], 'revoke-test.pem'),
+                   retcode=0)
+
+
+def parse_index_file(index_file):
+    with open(index_file) as file:
+        rows = [line.split('\t') for line in file]
+
+        if rows:
+            client_hash = {}
+            for row in rows:
+                client_name = re.search('(?<=/CN=).*?/', row[5]).group(0)[:-1]
+                is_valid = bool(row[0] == 'V')
+                expiration_time = datetime.strptime(row[1], "%y%m%d%H%M%SZ").strftime("%Y-%m-%dT%H:%M:%SZ")
+                revocation_time = ''
+                if row[2]:
+                    revocation_time = datetime.strptime(row[2], "%y%m%d%H%M%SZ").strftime("%Y-%m-%dT%H:%M:%SZ")
+                serial_number = row[3]
+                full_DN = row[5]
+
+                client_hash[client_name] = {
+                    'is_valid': is_valid,
+                    'expiration_time': expiration_time,
+                    'revocation_time': revocation_time,
+                    'serial_number': serial_number,
+                    'full_DN': full_DN,
+                }
+            return client_hash
+
+        else:
+            return {}
+
+
+def parse_s3_cert_root_path(full_path):
+    _, path = re.split('\:\/+', full_path, 1)
+    try:
+        bucket, bucket_path = path.split('/')
+    except ValueError:
+        bucket = path
+        bucket_path = ''
+    return [bucket, bucket_path]
+
+
+def list_dirs_from_root_path(region, full_path):
+    bucket, prefix = parse_s3_cert_root_path(full_path)
+    conn = boto.s3.connect_to_region(region)
+
+    return (key.name.encode('utf-8') for key in conn.get_bucket(bucket).list(prefix, '/'))
+
+
+def get_latest_dir_from_root_path(region, full_path, override=None):
+    if override:
+        return override.strip('/') + '/'
+    dir_list = sorted(list_dirs_from_root_path(region, full_path), reverse=True)
+    if dir_list:
+        return dir_list[0]
+    else:
+        return ''
+
+
+def pull_latest_certs_from_root_path(region, full_path, dest_dir):
+    latest_dir = get_latest_dir_from_root_path(region, full_path)
+
+    print latest_dir
+    mkdir.run(['-p', dest_dir], retcode=0)
+    if latest_dir:
+        with local.env(**env):
+            awscli = local['/usr/local/bin/aws']
+            bucket, prefix = parse_s3_cert_root_path(full_path)
+            s3_path = "s3://{}/{}{}".format(bucket, prefix, latest_dir)
+            awscli.run(['s3', 'cp', s3_path, dest_dir, '--recursive'],
+                       retcode=0, stderr=sys.stdout)
+
+
+def md5sum_dir(directory):
+    # this sure is ugly.
+    # BUG - figure out why the tars keep generating different shas for the same content
+    proc = subprocess.Popen("find \"{}\" -type f ! -name '*.tar.gz' -exec md5sum {{}} \; | sort -k 2 | md5sum".format(directory),
+                            shell=True,
+                            stdout=subprocess.PIPE)
+    raw_stdout = proc.stdout.read()
+    return raw_stdout.split()[0]
+
+
+def push_certs_to_root_path(region, full_path, certs_dir):
+    # check if we need to upload
+    existing_shas = []
+    for entry in list_dirs_from_root_path(region, full_path):
+        if len(entry.split('-', 2)) > 2:
+            existing_shas.append(entry.split('-', 2)[2].strip('/'))
+
+    certs_dir_sha = md5sum_dir(certs_dir)
+    if certs_dir_sha in existing_shas:
+        print "SHA: {} already exists in s3. Aborting upload".format(certs_dir_sha)
+        sys.exit(0)
+    else:
+        new_dir_name = "{}-{}/".format(datetime.utcnow().strftime("%Y%m%d-%H%M%SZ"), certs_dir_sha)
+        s3_path = os.path.join(full_path, new_dir_name)
+        awscli = local['/usr/local/bin/aws']
+
+        print "Uploading certs to {}".format(s3_path)
+        awscli.run(['s3', 'cp', certs_dir, s3_path, '--recursive', '--dryrun'],
+                   retcode=0, stdout=sys.stdout, stderr=sys.stdout)
+
+
+pull_latest_certs_from_root_path(env['S3_REGION'], env['S3_CERT_ROOT_PATH'], env['KEY_DIR'])
+
+environment = Environment(loader=PackageLoader('openvpn_cert_generator'))
+environment.filters['strtobool'] = strtobool
+template = environment.get_template('client.ovpn.j2')
+client_index_db = os.path.join(env['KEY_DIR'], 'index.txt')
+
+build_server()
+build_client('dummy', template)
+revoke_client('dummy', client_index_db)
+[build_client(client, template) for client in env['ACTIVE_CLIENTS'].strip().split(",")]
+[revoke_client(client, client_index_db) for client in env['REVOKED_CLIENTS'].strip().split(",")]
+
+push_certs_to_root_path(env['S3_REGION'], env['S3_CERT_ROOT_PATH'], env['KEY_DIR'])
