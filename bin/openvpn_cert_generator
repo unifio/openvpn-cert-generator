@@ -3,7 +3,14 @@
 from openvpn_cert_generator.utils.settings_dict import SettingsDict
 from openvpn_cert_generator import core
 
+
+def sanity_check():
+    # TODO: check the validity of the settings dict before proceeding
+    pass
+
 env = SettingsDict()
+
+sanity_check()
 conn = core.s3_wrapper.init_s3_connection(env['S3_REGION'])
 
 core.s3_wrapper.pull_latest_certs_from_root_path(conn, env)
