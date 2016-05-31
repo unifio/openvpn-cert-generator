@@ -11,9 +11,10 @@ def sanity_check():
 env = SettingsDict()
 
 sanity_check()
-conn = core.s3_wrapper.init_s3_connection(env['S3_REGION'])
 
-core.s3_wrapper.pull_latest_certs_from_root_path(conn, env)
+if (env['S3_REGION'] or env['S3_CERT_ROOT_PATH']):
+    conn = core.s3_wrapper.init_s3_connection(env['S3_REGION'])
+    core.s3_wrapper.pull_latest_certs_from_root_path(conn, env)
 
 core.server.build_server(env)
 core.client.build_client('dummy', env)
@@ -21,4 +22,5 @@ core.client.revoke_client('dummy', env)
 [core.client.build_client(client, env) for client in env['ACTIVE_CLIENTS'].strip().split(",")]
 [core.client.revoke_client(client, env) for client in env['REVOKED_CLIENTS'].strip().split(",")]
 
-core.s3_wrapper.push_certs_to_root_path(conn, env)
+if (env['S3_REGION'] or env['S3_CERT_ROOT_PATH']):
+    core.s3_wrapper.push_certs_to_root_path(conn, env)
