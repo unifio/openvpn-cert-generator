@@ -13,6 +13,7 @@ setup_options = dict(
     description='Fun description here',
     version='0.0.1',
     packages=find_packages(exclude=['tests*']),
+    package_data={'openvpn_cert_generator': ['templates/*', ]},
     install_requires=requires,
     scripts=['bin/openvpn-cert-generator'],
 )
