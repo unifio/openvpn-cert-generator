@@ -1,4 +1,4 @@
 .vagrant/
 *.pyc
 /dist/
-/*.egg-info
+*.egg-info

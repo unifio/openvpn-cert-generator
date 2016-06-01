@@ -9,12 +9,12 @@ requires = [
 ]
 
 setup_options = dict(
-    name='openvpn_cert_generator',
+    name='openvpn-cert-generator',
     description='Fun description here',
     version='0.0.1',
     packages=find_packages(exclude=['tests*']),
     install_requires=requires,
-    scripts=['bin/openvpn_cert_generator'],
+    scripts=['bin/openvpn-cert-generator'],
 )
 
 setup(**setup_options)
