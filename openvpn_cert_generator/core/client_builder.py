@@ -40,7 +40,7 @@ class ClientBuilder(object):
             client_files = glob(os.path.join(local.env['KEY_DIR'], client + '.*'))
 
             if client_files:
-                print "Client {} certs already exist, skipping".format(client)
+                print('Client {} certs already exist, skipping'.format(client))
             else:
                 pkitool.run(client, retcode=0, stderr=sys.stdout)
 

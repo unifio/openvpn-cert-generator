@@ -1,5 +1,5 @@
-from client_builder import ClientBuilder
-from client_revoker import revoke_client  # NOQA
+from .client_builder import ClientBuilder
+from .client_revoker import revoke_client  # NOQA
 
 template_file = 'client.ovpn.j2'
 shared_vars = {}

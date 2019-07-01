@@ -3,7 +3,7 @@ Revokes client certs
 '''
 from plumbum import local
 from plumbum.cmd import rm
-from index_db_parser import parse_index_file
+from .index_db_parser import parse_index_file
 import os
 import sys
 

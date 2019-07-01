@@ -1,3 +1,3 @@
-import server  # NOQA
-import client  # NOQA
-import s3_wrapper  # NOQA
+from . import server  # NOQA
+from . import client  # NOQA
+from . import s3_wrapper  # NOQA
