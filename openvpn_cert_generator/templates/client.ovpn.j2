@@ -44,14 +44,14 @@ key {{client}}.key
 # To use this feature, you will need to generate your server certificates with
 # the nsCertType field set to "server".  The build-key-server script in the
 # easy-rsa folder will do this.
-ns-cert-type server
+remote-cert-tls server
 
 # Enable compression on the VPN link. Don't enable this unless it is also
 # enabled in the server config file.
 {% if OPENVPN_COMP_LZO|strtobool -%}
-comp-lzo
+compress lzo
 {% else -%}
-;comp-lzo
+;compress lzo
 {% endif %}
 
 # Set log file verbosity.

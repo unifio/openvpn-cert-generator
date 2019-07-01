@@ -70,14 +70,14 @@ def push_certs_to_root_path(conn, settings):
 
     certs_dir_sha = md5sum_dir(certs_dir)
     if certs_dir_sha in existing_shas:
-        print "SHA: {} already exists in s3. Aborting upload".format(certs_dir_sha)
+        print('SHA: {} already exists in s3. Aborting upload'.format(certs_dir_sha))
         sys.exit(0)
     else:
-        new_dir_name = "{}-{}/".format(datetime.utcnow().strftime("%Y%m%d-%H%M%SZ"), certs_dir_sha)
+        new_dir_name = '{}-{}/'.format(datetime.utcnow().strftime("%Y%m%d-%H%M%SZ"), certs_dir_sha)
         s3_path = os.path.join(full_path, new_dir_name)
         awscli = local['/usr/local/bin/aws']
 
-        print "Uploading certs to {}".format(s3_path)
+        print('Uploading certs to {}'.format(s3_path))
         params = ['s3', 'cp', certs_dir, s3_path, '--recursive']
         if dry_run:
             params.append('--dryrun')

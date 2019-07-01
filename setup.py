@@ -11,7 +11,7 @@ requires = [
 setup_options = dict(
     name='openvpn-cert-generator',
     description='Fun description here',
-    version='0.0.1',
+    version='0.0.2',
     packages=find_packages(exclude=['tests*']),
     package_data={'openvpn_cert_generator': ['templates/*', ]},
     install_requires=requires,
