@@ -53,18 +53,18 @@ class ClientBuilder(object):
             existing_md5 = ''
             ovpn_file = os.path.join(local.env['KEY_DIR'], template_vars['client'] + '.ovpn')
             if local.path(ovpn_file).exists():
-                with open(ovpn_file, 'rb') as f:
+                with open(ovpn_file, 'r', encoding='utf-8') as f:
                     hasher = hashlib.md5()
-                    hasher.update(f.read())
+                    hasher.update(f.read().encode('utf-8'))
                     existing_md5 = hasher.hexdigest()
 
             new_ovpn_contents = self.template.render(template_vars)
             hasher = hashlib.md5()
-            hasher.update(new_ovpn_contents)
+            hasher.update(new_ovpn_contents.encode('utf-8'))
             new_md5 = hasher.hexdigest()
 
             if existing_md5 != new_md5:
-                with open(ovpn_file, "wb") as f:
+                with open(ovpn_file, "w", encoding='utf-8') as f:
                     f.write(self.template.render(template_vars))
 
     def tarball_client_files(self, client, settings):
