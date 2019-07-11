@@ -26,7 +26,7 @@ def parse_s3_url(full_path):
 
 def list_dirs_from_path(conn, full_path):
     bucket, prefix = parse_s3_url(full_path)
-    return (key.name.encode('utf-8') for key in conn.get_bucket(bucket).list(prefix, '/'))
+    return (key.name for key in conn.get_bucket(bucket).list(prefix, '/'))
 
 
 def get_latest_dir_from_root_path(conn, full_path):
@@ -68,7 +68,7 @@ def push_certs_to_root_path(conn, settings):
         if len(entry.split('-', 2)) > 2:
             existing_shas.append(entry.split('-', 2)[2].strip('/'))
 
-    certs_dir_sha = md5sum_dir(certs_dir)
+    certs_dir_sha = md5sum_dir(certs_dir.encode('utf-8'))
     if certs_dir_sha in existing_shas:
         print('SHA: {} already exists in s3. Aborting upload'.format(certs_dir_sha))
         sys.exit(0)
